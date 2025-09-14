@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const vision = require('@google-cloud/vision');
 const { MockVisionClient } = require('./vision-mock');
+const OpenAI = require('openai');
 
 const app = express();
 const PORT = 3001;
@@ -25,6 +26,21 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CLOUD_PROJE
   // No credentials found, use mock client for development/testing
   console.log('No Google Cloud credentials found, using Mock Vision API');
   visionClient = new MockVisionClient();
+}
+
+// Initialize OpenAI client (if API key is available)
+let openaiClient;
+if (process.env.OPENAI_API_KEY) {
+  try {
+    openaiClient = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+    console.log('OpenAI Vision API available');
+  } catch (error) {
+    console.log('OpenAI initialization failed:', error.message);
+  }
+} else {
+  console.log('No OpenAI API key found - OpenAI Vision will not be available');
 }
 
 // Enable CORS for frontend requests
@@ -239,6 +255,213 @@ app.post('/api/images/analyze', async (req, res) => {
     });
   }
 });
+
+// Analyze image with OpenAI Vision API
+app.post('/api/images/analyze-openai', async (req, res) => {
+  try {
+    const { filename } = req.body;
+
+    if (!filename) {
+      return res.status(400).json({
+        error: 'Filename is required'
+      });
+    }
+
+    // Check if OpenAI client is available
+    if (!openaiClient) {
+      return res.status(503).json({
+        error: 'OpenAI Vision API not available',
+        details: 'OpenAI API key not configured'
+      });
+    }
+
+    const imagePath = path.join(__dirname, 'uploads', filename);
+
+    // Check if image file exists
+    if (!fs.existsSync(imagePath)) {
+      return res.status(404).json({
+        error: 'Image file not found',
+        filename
+      });
+    }
+
+    console.log(`Analyzing image with OpenAI: ${filename}`);
+
+    // Convert image to base64 for OpenAI API
+    const imageBuffer = fs.readFileSync(imagePath);
+    const base64Image = imageBuffer.toString('base64');
+    const mimeType = 'image/png'; // Assuming PNG format
+
+    // Call OpenAI Vision API with detailed food analysis prompt
+    const response = await openaiClient.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Analyze this food image in detail. Please provide:
+
+1. **Food Items**: List all food items you can identify with confidence levels
+2. **Portion Sizes**: Estimate portion sizes using visual cues and scale references in the image
+3. **Nutritional Analysis**: Provide estimated nutritional information (calories, protein, carbs, fat, fiber)
+4. **Food Quality**: Assess freshness, preparation method, and overall quality
+5. **Cultural Context**: Identify cuisine type or cultural background if apparent
+6. **Dietary Information**: Note any dietary considerations (vegetarian, vegan, gluten-free, etc.)
+7. **Ingredients**: List likely ingredients used in preparation
+8. **Serving Suggestions**: Provide context about typical serving sizes
+
+Please structure your response as JSON with clear categories. Be specific about confidence levels for your identifications.`
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:${mimeType};base64,${base64Image}`,
+                detail: 'high'
+              }
+            }
+          ]
+        }
+      ],
+      max_tokens: 1500,
+      temperature: 0.1
+    });
+
+    // Parse OpenAI response
+    const analysisText = response.choices[0].message.content;
+
+    // Try to parse JSON response, fallback to structured text parsing
+    let structuredAnalysis;
+    try {
+      structuredAnalysis = JSON.parse(analysisText);
+    } catch (jsonError) {
+      // If not valid JSON, create structured response from text
+      structuredAnalysis = {
+        rawAnalysis: analysisText,
+        foodItems: extractFoodItems(analysisText),
+        nutritionalInfo: extractNutritionalInfo(analysisText),
+        portionSizes: extractPortionInfo(analysisText),
+        confidence: 'high'
+      };
+    }
+
+    const analysisResults = {
+      filename,
+      timestamp: new Date().toISOString(),
+      provider: 'OpenAI GPT-4 Vision',
+      results: {
+        detailedAnalysis: structuredAnalysis,
+        conversationalSummary: analysisText,
+
+        // Extract food items in compatible format for Open Food Facts integration
+        foodItems: extractCompatibleFoodItems(structuredAnalysis, analysisText),
+
+        // Nutritional insights
+        nutritionalAnalysis: structuredAnalysis.nutritionalInfo || extractNutritionalInfo(analysisText),
+
+        // Additional OpenAI-specific insights
+        culturalContext: structuredAnalysis.culturalContext || null,
+        dietaryConsiderations: structuredAnalysis.dietaryInformation || null,
+        qualityAssessment: structuredAnalysis.foodQuality || null,
+
+        // Metadata
+        processingTime: new Date().toISOString(),
+        apiProvider: 'OpenAI GPT-4 Vision'
+      }
+    };
+
+    console.log(`OpenAI analysis completed for ${filename}`);
+
+    res.json({
+      success: true,
+      data: analysisResults
+    });
+
+  } catch (error) {
+    console.error('Error analyzing image with OpenAI:', error);
+    res.status(500).json({
+      error: 'Failed to analyze image with OpenAI',
+      details: error.message
+    });
+  }
+});
+
+// Helper functions for parsing OpenAI response
+function extractFoodItems(text) {
+  // Simple food item extraction from text
+  const foodPatterns = [
+    /food items?[:\s]*([^\.]+)/i,
+    /identified?[:\s]*([^\.]+)/i,
+    /contains?[:\s]*([^\.]+)/i
+  ];
+
+  const items = [];
+  for (const pattern of foodPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const foodText = match[1];
+      const foodItems = foodText.split(/[,;]/).map(item => item.trim());
+      items.push(...foodItems);
+    }
+  }
+
+  return items.slice(0, 5).map((item, index) => ({
+    name: item,
+    confidence: Math.max(60, 95 - index * 10), // Decreasing confidence
+    category: 'detected_food'
+  }));
+}
+
+function extractNutritionalInfo(text) {
+  const nutritionPatterns = {
+    calories: /(\d+)\s*(?:cal|calories)/i,
+    protein: /(\d+(?:\.\d+)?)\s*g?\s*protein/i,
+    carbs: /(\d+(?:\.\d+)?)\s*g?\s*carb/i,
+    fat: /(\d+(?:\.\d+)?)\s*g?\s*fat/i
+  };
+
+  const nutrition = {};
+  for (const [key, pattern] of Object.entries(nutritionPatterns)) {
+    const match = text.match(pattern);
+    if (match) {
+      nutrition[key] = match[1];
+    }
+  }
+
+  return Object.keys(nutrition).length > 0 ? nutrition : null;
+}
+
+function extractPortionInfo(text) {
+  const portionPatterns = [
+    /portion[:\s]*([^\.]+)/i,
+    /serving[:\s]*([^\.]+)/i,
+    /amount[:\s]*([^\.]+)/i
+  ];
+
+  for (const pattern of portionPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[1].trim();
+    }
+  }
+
+  return null;
+}
+
+function extractCompatibleFoodItems(structuredData, text) {
+  // Extract food items in format compatible with Open Food Facts integration
+  if (structuredData && structuredData.foodItems && Array.isArray(structuredData.foodItems)) {
+    return structuredData.foodItems.map(item => ({
+      name: typeof item === 'string' ? item : item.name || item.food,
+      confidence: item.confidence || 80,
+      category: 'detected_food'
+    }));
+  }
+
+  // Fallback to text extraction
+  return extractFoodItems(text);
+}
 
 // Search Open Food Facts for product information
 app.post('/api/products/search', async (req, res) => {
