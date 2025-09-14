@@ -13,6 +13,8 @@ export default function CameraTest() {
   const [lastUploadedFilename, setLastUploadedFilename] = useState(null);
   const [productResults, setProductResults] = useState(null);
   const [productSearchStatus, setProductSearchStatus] = useState('idle'); // idle, searching, success, error
+  const [openaiResults, setOpenaiResults] = useState(null);
+  const [openaiAnalysisStatus, setOpenaiAnalysisStatus] = useState('idle'); // idle, analyzing, success, error
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -225,6 +227,52 @@ export default function CameraTest() {
     }
   };
 
+  const analyzeImageOpenAI = async () => {
+    if (!lastUploadedFilename) {
+      console.error('No uploaded image to analyze. Please save the image first.');
+      setOpenaiAnalysisStatus('error');
+      return;
+    }
+
+    try {
+      setOpenaiAnalysisStatus('analyzing');
+      setOpenaiResults(null);
+      console.log('Analyzing image with OpenAI:', lastUploadedFilename);
+
+      const analysisResponse = await fetch('http://localhost:3001/api/images/analyze-openai', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          filename: lastUploadedFilename
+        }),
+      });
+
+      console.log('OpenAI analysis response received:', analysisResponse.status, analysisResponse.statusText);
+
+      if (!analysisResponse.ok) {
+        const errorText = await analysisResponse.text();
+        console.error('OpenAI analysis failed response:', errorText);
+        throw new Error(`OpenAI analysis failed: ${analysisResponse.status} - ${errorText}`);
+      }
+
+      const result = await analysisResponse.json();
+      console.log('OpenAI analysis completed:', result);
+      setOpenaiResults(result.data);
+      setOpenaiAnalysisStatus('success');
+
+      // Automatically search for products if food items were detected
+      if (result.data && result.data.results && result.data.results.foodItems && result.data.results.foodItems.length > 0) {
+        await searchProducts(result.data.results.foodItems);
+      }
+
+    } catch (err) {
+      console.error('Error analyzing image with OpenAI:', err);
+      setOpenaiAnalysisStatus('error');
+    }
+  };
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       <Text style={styles.title}>Camera Test</Text>
@@ -297,7 +345,21 @@ export default function CameraTest() {
                 disabled={analysisStatus === 'analyzing'}
               >
                 <Text style={styles.buttonText}>
-                  {analysisStatus === 'analyzing' ? 'Analyzing...' : 'Analyze Image'}
+                  {analysisStatus === 'analyzing' ? 'Analyzing...' : 'Analyze with Google Vision'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.button,
+                  styles.openaiButton,
+                  openaiAnalysisStatus === 'analyzing' && styles.buttonDisabled
+                ]}
+                onPress={analyzeImageOpenAI}
+                disabled={openaiAnalysisStatus === 'analyzing'}
+              >
+                <Text style={styles.buttonText}>
+                  {openaiAnalysisStatus === 'analyzing' ? 'Analyzing with AI...' : 'Analyze with OpenAI Vision'}
                 </Text>
               </TouchableOpacity>
 
@@ -348,6 +410,63 @@ export default function CameraTest() {
 
               {analysisStatus === 'error' && (
                 <Text style={styles.error}>Failed to analyze image. Please try again.</Text>
+              )}
+
+              {openaiAnalysisStatus === 'success' && openaiResults && (
+                <View style={styles.openaiContainer}>
+                  <Text style={styles.openaiTitle}>OpenAI Analysis Results:</Text>
+
+                  {openaiResults.results.conversationalSummary && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>AI Analysis Summary:</Text>
+                      <Text style={styles.conversationalText}>
+                        {openaiResults.results.conversationalSummary}
+                      </Text>
+                    </View>
+                  )}
+
+                  {openaiResults.results.foodItems && openaiResults.results.foodItems.length > 0 && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Food Items Detected:</Text>
+                      {openaiResults.results.foodItems.map((item, index) => (
+                        <Text key={index} style={styles.resultItem}>
+                          • {item.name} ({item.confidence}% confident)
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {openaiResults.results.nutritionalAnalysis && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Nutritional Information:</Text>
+                      <Text style={styles.nutritionalText}>
+                        {JSON.stringify(openaiResults.results.nutritionalAnalysis, null, 2)}
+                      </Text>
+                    </View>
+                  )}
+
+                  {openaiResults.results.culturalContext && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Cultural Context:</Text>
+                      <Text style={styles.resultItem}>
+                        {openaiResults.results.culturalContext}
+                      </Text>
+                    </View>
+                  )}
+
+                  {openaiResults.results.dietaryConsiderations && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Dietary Information:</Text>
+                      <Text style={styles.resultItem}>
+                        {openaiResults.results.dietaryConsiderations}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {openaiAnalysisStatus === 'error' && (
+                <Text style={styles.error}>Failed to analyze image with OpenAI. Please try again.</Text>
               )}
 
               {productSearchStatus === 'searching' && (
@@ -554,5 +673,43 @@ const styles = StyleSheet.create({
     color: '#999',
     fontStyle: 'italic',
     marginLeft: 10,
+  },
+  openaiButton: {
+    backgroundColor: '#28a745', // Green for OpenAI
+  },
+  openaiContainer: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#f8fff8',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#28a745',
+    width: 320,
+  },
+  openaiTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    color: '#28a745',
+  },
+  conversationalText: {
+    fontSize: 14,
+    color: '#333',
+    backgroundColor: '#fff',
+    padding: 10,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    lineHeight: 20,
+  },
+  nutritionalText: {
+    fontSize: 12,
+    color: '#666',
+    backgroundColor: '#fff',
+    padding: 10,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    fontFamily: 'monospace',
   },
 });
