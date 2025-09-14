@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 
 export default function CameraTest() {
   const [hasPermission, setHasPermission] = useState(null);
@@ -11,6 +11,8 @@ export default function CameraTest() {
   const [analysisResults, setAnalysisResults] = useState(null);
   const [analysisStatus, setAnalysisStatus] = useState('idle'); // idle, analyzing, success, error
   const [lastUploadedFilename, setLastUploadedFilename] = useState(null);
+  const [productResults, setProductResults] = useState(null);
+  const [productSearchStatus, setProductSearchStatus] = useState('idle'); // idle, searching, success, error
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -177,14 +179,54 @@ export default function CameraTest() {
       setAnalysisResults(result.data);
       setAnalysisStatus('success');
 
+      // Automatically search for products if food items were detected
+      if (result.data && result.data.results && result.data.results.foodItems && result.data.results.foodItems.length > 0) {
+        await searchProducts(result.data.results.foodItems);
+      }
+
     } catch (err) {
       console.error('Error analyzing image:', err);
       setAnalysisStatus('error');
     }
   };
 
+  const searchProducts = async (foodItems) => {
+    try {
+      setProductSearchStatus('searching');
+      setProductResults(null);
+      console.log('Searching for products...', foodItems);
+
+      const searchResponse = await fetch('http://localhost:3001/api/products/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          foodItems: foodItems
+        }),
+      });
+
+      console.log('Product search response received:', searchResponse.status, searchResponse.statusText);
+
+      if (!searchResponse.ok) {
+        const errorText = await searchResponse.text();
+        console.error('Product search failed response:', errorText);
+        throw new Error(`Product search failed: ${searchResponse.status} - ${errorText}`);
+      }
+
+      const result = await searchResponse.json();
+      console.log('Product search completed:', result);
+      setProductResults(result.data);
+      setProductSearchStatus('success');
+
+    } catch (err) {
+      console.error('Error searching products:', err);
+      setProductSearchStatus('error');
+    }
+  };
+
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       <Text style={styles.title}>Camera Test</Text>
 
       {hasPermission === null && (
@@ -307,21 +349,64 @@ export default function CameraTest() {
               {analysisStatus === 'error' && (
                 <Text style={styles.error}>Failed to analyze image. Please try again.</Text>
               )}
+
+              {productSearchStatus === 'searching' && (
+                <Text style={styles.searchingText}>Searching for products...</Text>
+              )}
+
+              {productSearchStatus === 'success' && productResults && (
+                <View style={styles.productContainer}>
+                  <Text style={styles.productTitle}>Related Products:</Text>
+                  {productResults.searchResults.map((searchResult, index) => (
+                    <View key={index} style={styles.productSearchSection}>
+                      <Text style={styles.productSearchTitle}>
+                        "{searchResult.searchTerm}" ({searchResult.detectedConfidence}% confident)
+                      </Text>
+                      {searchResult.products.length > 0 ? (
+                        searchResult.products.map((product, productIndex) => (
+                          <TouchableOpacity
+                            key={productIndex}
+                            style={styles.productLink}
+                            onPress={() => {
+                              if (typeof window !== 'undefined') {
+                                window.open(product.url, '_blank');
+                              }
+                            }}
+                          >
+                            <Text style={styles.productName}>
+                              {product.name} {product.brand && `(${product.brand})`}
+                            </Text>
+                            <Text style={styles.productUrl}>View on Open Food Facts →</Text>
+                          </TouchableOpacity>
+                        ))
+                      ) : (
+                        <Text style={styles.noProductsText}>No products found</Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {productSearchStatus === 'error' && (
+                <Text style={styles.error}>Failed to search for products. Please try again.</Text>
+              )}
             </>
           )}
         </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  contentContainer: {
     alignItems: 'center',
     padding: 20,
-    backgroundColor: '#fff',
+    paddingBottom: 40,
   },
   title: {
     fontSize: 24,
@@ -411,5 +496,63 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ddd',
     fontFamily: 'monospace',
+  },
+  searchingText: {
+    fontSize: 16,
+    color: '#007AFF',
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  productContainer: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#f0f8ff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#b3d9ff',
+    width: 320,
+  },
+  productTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    color: '#0066cc',
+  },
+  productSearchSection: {
+    marginBottom: 15,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  productSearchTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    color: '#333',
+  },
+  productLink: {
+    backgroundColor: '#fff',
+    padding: 10,
+    marginBottom: 5,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  productName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 2,
+  },
+  productUrl: {
+    fontSize: 12,
+    color: '#007AFF',
+    textDecorationLine: 'underline',
+  },
+  noProductsText: {
+    fontSize: 14,
+    color: '#999',
+    fontStyle: 'italic',
+    marginLeft: 10,
   },
 });
