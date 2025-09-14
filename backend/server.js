@@ -240,6 +240,85 @@ app.post('/api/images/analyze', async (req, res) => {
   }
 });
 
+// Search Open Food Facts for product information
+app.post('/api/products/search', async (req, res) => {
+  try {
+    const { foodItems } = req.body;
+
+    if (!foodItems || !Array.isArray(foodItems) || foodItems.length === 0) {
+      return res.status(400).json({
+        error: 'foodItems array is required'
+      });
+    }
+
+    console.log('Searching Open Food Facts for food items:', foodItems.map(item => item.name));
+
+    const productResults = [];
+
+    // Search for each detected food item
+    for (const foodItem of foodItems) {
+      try {
+        const searchTerm = encodeURIComponent(foodItem.name);
+        const searchUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${searchTerm}&json=1&page_size=5`;
+
+        console.log(`Searching for "${foodItem.name}": ${searchUrl}`);
+
+        const response = await fetch(searchUrl);
+        const data = await response.json();
+
+        if (data.products && data.products.length > 0) {
+          const products = data.products.slice(0, 3).map(product => ({
+            id: product.id || product._id,
+            name: product.product_name || product.product_name_en || 'Unknown Product',
+            brand: product.brands || '',
+            url: `https://world.openfoodfacts.org/product/${product.code || product.id}`,
+            image: product.image_url || product.image_front_url,
+            nutritionGrade: product.nutrition_grades || product.nutriscore_grade,
+            categories: product.categories || '',
+            confidence: foodItem.confidence
+          }));
+
+          productResults.push({
+            searchTerm: foodItem.name,
+            detectedConfidence: foodItem.confidence,
+            products
+          });
+        } else {
+          productResults.push({
+            searchTerm: foodItem.name,
+            detectedConfidence: foodItem.confidence,
+            products: []
+          });
+        }
+      } catch (searchError) {
+        console.error(`Error searching for "${foodItem.name}":`, searchError);
+        productResults.push({
+          searchTerm: foodItem.name,
+          detectedConfidence: foodItem.confidence,
+          products: [],
+          error: searchError.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        searchResults: productResults,
+        totalSearches: foodItems.length,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error searching products:', error);
+    res.status(500).json({
+      error: 'Failed to search products',
+      details: error.message
+    });
+  }
+});
+
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error('Server error:', error);
