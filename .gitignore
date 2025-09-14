@@ -45,3 +45,6 @@ backend/uploads/*.png
 backend/uploads/*.jpg
 backend/uploads/*.jpeg
 backend/uploads/*.gif
+
+# Google Cloud credentials
+backend/google-credentials.json

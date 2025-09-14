@@ -8,6 +8,9 @@ export default function CameraTest() {
   const [stream, setStream] = useState(null);
   const [capturedImage, setCapturedImage] = useState(null);
   const [uploadStatus, setUploadStatus] = useState('idle'); // idle, uploading, success, error
+  const [analysisResults, setAnalysisResults] = useState(null);
+  const [analysisStatus, setAnalysisStatus] = useState('idle'); // idle, analyzing, success, error
+  const [lastUploadedFilename, setLastUploadedFilename] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -93,31 +96,90 @@ export default function CameraTest() {
       console.log('Saving image for processing...');
 
       // Convert data URL to blob
+      console.log('Converting image data to blob...');
       const response = await fetch(capturedImage);
       const blob = await response.blob();
+      console.log('Blob created:', blob.size, 'bytes, type:', blob.type);
 
       // Create form data for upload
       const formData = new FormData();
-      formData.append('image', blob, `food-scan-${Date.now()}.png`);
+      const filename = `food-scan-${Date.now()}.png`;
+      formData.append('image', blob, filename);
       formData.append('timestamp', new Date().toISOString());
+      console.log('FormData prepared for upload, filename:', filename);
 
       // Send to backend endpoint
+      console.log('Sending request to backend...');
       const uploadResponse = await fetch('http://localhost:3001/api/images/upload', {
         method: 'POST',
         body: formData,
       });
 
+      console.log('Upload response received:', uploadResponse.status, uploadResponse.statusText);
+
       if (!uploadResponse.ok) {
-        throw new Error(`Upload failed: ${uploadResponse.status}`);
+        const errorText = await uploadResponse.text();
+        console.error('Upload failed response:', errorText);
+        throw new Error(`Upload failed: ${uploadResponse.status} - ${errorText}`);
       }
 
       const result = await uploadResponse.json();
       console.log('Image saved successfully:', result);
       setUploadStatus('success');
 
+      // Store the uploaded filename for analysis
+      if (result.data && result.data.filename) {
+        setLastUploadedFilename(result.data.filename);
+        console.log('Filename stored for analysis:', result.data.filename);
+      } else {
+        console.warn('No filename received from upload response');
+      }
+
     } catch (err) {
       console.error('Error saving image:', err);
+      console.error('Error stack:', err.stack);
       setUploadStatus('error');
+    }
+  };
+
+  const analyzeImage = async () => {
+    if (!lastUploadedFilename) {
+      console.error('No uploaded image to analyze. Please save the image first.');
+      setAnalysisStatus('error');
+      return;
+    }
+
+    try {
+      setAnalysisStatus('analyzing');
+      setAnalysisResults(null);
+      console.log('Analyzing image:', lastUploadedFilename);
+
+      const analysisResponse = await fetch('http://localhost:3001/api/images/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          filename: lastUploadedFilename
+        }),
+      });
+
+      console.log('Analysis response received:', analysisResponse.status, analysisResponse.statusText);
+
+      if (!analysisResponse.ok) {
+        const errorText = await analysisResponse.text();
+        console.error('Analysis failed response:', errorText);
+        throw new Error(`Analysis failed: ${analysisResponse.status} - ${errorText}`);
+      }
+
+      const result = await analysisResponse.json();
+      console.log('Analysis completed:', result);
+      setAnalysisResults(result.data);
+      setAnalysisStatus('success');
+
+    } catch (err) {
+      console.error('Error analyzing image:', err);
+      setAnalysisStatus('error');
     }
   };
 
@@ -184,12 +246,66 @@ export default function CameraTest() {
                 </Text>
               </TouchableOpacity>
 
+              <TouchableOpacity
+                style={[
+                  styles.button,
+                  analysisStatus === 'analyzing' && styles.buttonDisabled
+                ]}
+                onPress={analyzeImage}
+                disabled={analysisStatus === 'analyzing'}
+              >
+                <Text style={styles.buttonText}>
+                  {analysisStatus === 'analyzing' ? 'Analyzing...' : 'Analyze Image'}
+                </Text>
+              </TouchableOpacity>
+
               {uploadStatus === 'success' && (
                 <Text style={styles.success}>Image saved successfully!</Text>
               )}
 
               {uploadStatus === 'error' && (
                 <Text style={styles.error}>Failed to save image. Please try again.</Text>
+              )}
+
+              {analysisStatus === 'success' && analysisResults && (
+                <View style={styles.analysisContainer}>
+                  <Text style={styles.analysisTitle}>Analysis Results:</Text>
+
+                  {analysisResults.results.foodItems.length > 0 && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Food Items Detected:</Text>
+                      {analysisResults.results.foodItems.map((item, index) => (
+                        <Text key={index} style={styles.resultItem}>
+                          • {item.name} ({item.confidence}% confident)
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {analysisResults.results.extractedText && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Text Found:</Text>
+                      <Text style={styles.extractedText}>
+                        {analysisResults.results.extractedText.fullText}
+                      </Text>
+                    </View>
+                  )}
+
+                  {analysisResults.results.objects.length > 0 && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Objects Detected:</Text>
+                      {analysisResults.results.objects.map((obj, index) => (
+                        <Text key={index} style={styles.resultItem}>
+                          • {obj.name} ({obj.confidence}% confident)
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {analysisStatus === 'error' && (
+                <Text style={styles.error}>Failed to analyze image. Please try again.</Text>
               )}
             </>
           )}
@@ -255,5 +371,45 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     backgroundColor: '#ccc',
     opacity: 0.6,
+  },
+  analysisContainer: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    width: 320,
+  },
+  analysisTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    color: '#007AFF',
+  },
+  resultSection: {
+    marginBottom: 15,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 5,
+    color: '#333',
+  },
+  resultItem: {
+    fontSize: 14,
+    color: '#666',
+    marginLeft: 10,
+    marginBottom: 2,
+  },
+  extractedText: {
+    fontSize: 14,
+    color: '#666',
+    backgroundColor: '#fff',
+    padding: 10,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    fontFamily: 'monospace',
   },
 });
