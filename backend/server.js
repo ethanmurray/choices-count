@@ -259,7 +259,7 @@ app.post('/api/images/analyze', async (req, res) => {
 // Analyze image with OpenAI Vision API
 app.post('/api/images/analyze-openai', async (req, res) => {
   try {
-    const { filename } = req.body;
+    const { filename, productDescription } = req.body;
 
     if (!filename) {
       return res.status(400).json({
@@ -292,7 +292,21 @@ app.post('/api/images/analyze-openai', async (req, res) => {
     const base64Image = imageBuffer.toString('base64');
     const mimeType = 'image/png'; // Assuming PNG format
 
-    // Call OpenAI Vision API with detailed food analysis prompt
+    // Create dynamic prompt based on product description
+    const basePrompt = `Analyze this food image for MULTIPLE PRODUCTS with detailed spatial awareness. Provide comprehensive analysis:
+
+**IMPORTANT**: This image may contain multiple distinct food products/items. Analyze each one separately.`;
+
+    const targetedPrompt = productDescription
+      ? `${basePrompt}
+
+**SPECIFIC FOCUS**: The user is particularly interested in finding information about: "${productDescription}"
+- Pay special attention to any products matching this description
+- Provide extra detail for organic certification, fair trade status, and brand information for this product
+- Generate optimized search terms specifically for this product to find it in food databases`
+      : basePrompt;
+
+    // Call OpenAI Vision API with enhanced prompt
     const response = await openaiClient.chat.completions.create({
       model: 'gpt-4o',
       messages: [
@@ -301,18 +315,68 @@ app.post('/api/images/analyze-openai', async (req, res) => {
           content: [
             {
               type: 'text',
-              text: `Analyze this food image in detail. Please provide:
+              text: `${targetedPrompt}
 
-1. **Food Items**: List all food items you can identify with confidence levels
-2. **Portion Sizes**: Estimate portion sizes using visual cues and scale references in the image
-3. **Nutritional Analysis**: Provide estimated nutritional information (calories, protein, carbs, fat, fiber)
-4. **Food Quality**: Assess freshness, preparation method, and overall quality
-5. **Cultural Context**: Identify cuisine type or cultural background if apparent
-6. **Dietary Information**: Note any dietary considerations (vegetarian, vegan, gluten-free, etc.)
-7. **Ingredients**: List likely ingredients used in preparation
-8. **Serving Suggestions**: Provide context about typical serving sizes
+Return a JSON response with this exact structure:
+{
+  "products": [
+    {
+      "id": "product_1",
+      "name": "Product Name",
+      "type": "product_type", // "packaged_food", "fresh_produce", "prepared_food", "beverage", etc.
+      "position": "spatial_description", // "left side", "center", "background", etc.
+      "quantity": 1, // number of identical items visible
+      "confidence": 95, // 0-100 confidence score
+      "nutritionalInfo": {
+        "calories": 150,
+        "protein": "5g",
+        "carbs": "30g",
+        "fat": "2g",
+        "fiber": "3g"
+      },
+      "portionSize": "1 cup / 240ml",
+      "brandInfo": "visible brand or packaging text if readable",
+      "ingredients": ["ingredient1", "ingredient2"],
+      "dietaryFlags": ["vegetarian", "gluten-free"], // array of applicable flags
+      "organicStatus": "certified_organic/likely_organic/conventional/unknown", // organic certification status
+      "fairTradeStatus": "certified_fair_trade/likely_fair_trade/conventional/unknown", // fair trade status
+      "certificationInfo": "specific certification text or logos visible",
+      "freshness": "fresh/good/poor quality assessment",
+      "preparationMethod": "raw/cooked/processed description",
+      "openFoodFactsSearchTerms": ["primary_search_term", "alt_term"] // optimized search terms for Open Food Facts
+    }
+  ],
+  "sceneAnalysis": {
+    "totalProducts": 2,
+    "sceneType": "grocery_haul/meal_prep/restaurant_plate/etc",
+    "culturalContext": "cuisine type or cultural background",
+    "setting": "kitchen/store/restaurant/etc",
+    "lightingQuality": "good/poor for analysis",
+    "imageQuality": "clear/blurry/partial view"
+  },
+  "aggregateNutrition": {
+    "totalCalories": 300,
+    "totalProtein": "10g",
+    "totalCarbs": "60g",
+    "totalFat": "4g"
+  },
+  "searchableTerms": ["term1", "term2"], // best terms for product database search
+  "recommendations": "suggestions for portion control, preparation, or health considerations"
+}
 
-Please structure your response as JSON with clear categories. Be specific about confidence levels for your identifications.`
+**KEY REQUIREMENTS**:
+1. Identify EACH DISTINCT product separately - don't group similar items
+2. Count identical items (e.g., "3 apples" = quantity: 3)
+3. Use spatial descriptions for position awareness
+4. Provide individual nutrition estimates per product
+5. Extract any visible text/branding for product identification
+6. Focus on products that can be found in food databases
+7. Be specific about packaging vs. contents (e.g., "yogurt container" vs. "yogurt")
+8. **ORGANIC/FAIR TRADE DETECTION**: Carefully examine labels for organic certification logos (USDA Organic, EU Organic, etc.) and Fair Trade certifications
+9. **OPTIMIZED SEARCH TERMS**: Generate the best possible search terms for each product to find matches in Open Food Facts database
+10. Include brand names, product names, and specific descriptors in search terms
+
+Analyze the image thoroughly and provide detailed, structured data for each product.`
             },
             {
               type: 'image_url',
@@ -354,20 +418,31 @@ Please structure your response as JSON with clear categories. Be specific about 
         detailedAnalysis: structuredAnalysis,
         conversationalSummary: analysisText,
 
+        // Multi-product analysis (new structured format)
+        products: structuredAnalysis.products || [],
+        sceneAnalysis: structuredAnalysis.sceneAnalysis || null,
+        aggregateNutrition: structuredAnalysis.aggregateNutrition || null,
+        searchableTerms: structuredAnalysis.searchableTerms || [],
+        recommendations: structuredAnalysis.recommendations || null,
+
         // Extract food items in compatible format for Open Food Facts integration
         foodItems: extractCompatibleFoodItems(structuredAnalysis, analysisText),
 
-        // Nutritional insights
-        nutritionalAnalysis: structuredAnalysis.nutritionalInfo || extractNutritionalInfo(analysisText),
+        // Nutritional insights (legacy format + new aggregate)
+        nutritionalAnalysis: structuredAnalysis.nutritionalInfo || structuredAnalysis.aggregateNutrition || extractNutritionalInfo(analysisText),
 
-        // Additional OpenAI-specific insights
-        culturalContext: structuredAnalysis.culturalContext || null,
+        // Additional OpenAI-specific insights (enhanced)
+        culturalContext: structuredAnalysis.culturalContext || (structuredAnalysis.sceneAnalysis ? structuredAnalysis.sceneAnalysis.culturalContext : null),
         dietaryConsiderations: structuredAnalysis.dietaryInformation || null,
         qualityAssessment: structuredAnalysis.foodQuality || null,
 
         // Metadata
         processingTime: new Date().toISOString(),
-        apiProvider: 'OpenAI GPT-4 Vision'
+        apiProvider: 'OpenAI GPT-4 Vision',
+
+        // Multi-product metadata
+        totalProducts: structuredAnalysis.products ? structuredAnalysis.products.length : (structuredAnalysis.sceneAnalysis ? structuredAnalysis.sceneAnalysis.totalProducts : 1),
+        sceneType: structuredAnalysis.sceneAnalysis ? structuredAnalysis.sceneAnalysis.sceneType : null
       }
     };
 
@@ -449,8 +524,61 @@ function extractPortionInfo(text) {
   return null;
 }
 
+// Extract organic and fair trade status from Open Food Facts labels
+function extractCertificationStatus(product) {
+  const labels = (product.labels || '').toLowerCase();
+  const labelsTags = product.labels_tags || [];
+
+  // Check for organic certification
+  let organicStatus = 'unknown';
+  const organicKeywords = ['organic', 'bio', 'organique', 'ecologique', 'biologique'];
+  const organicTags = labelsTags.filter(tag =>
+    tag.includes('organic') || tag.includes('bio') || tag.includes('en:organic')
+  );
+
+  if (organicTags.length > 0 || organicKeywords.some(keyword => labels.includes(keyword))) {
+    organicStatus = 'certified_organic';
+  }
+
+  // Check for fair trade certification
+  let fairTradeStatus = 'unknown';
+  const fairTradeKeywords = ['fair trade', 'fairtrade', 'commerce equitable', 'max havelaar'];
+  const fairTradeTags = labelsTags.filter(tag =>
+    tag.includes('fair-trade') || tag.includes('fairtrade') || tag.includes('en:fair-trade')
+  );
+
+  if (fairTradeTags.length > 0 || fairTradeKeywords.some(keyword => labels.includes(keyword))) {
+    fairTradeStatus = 'certified_fair_trade';
+  }
+
+  return {
+    organicStatus,
+    fairTradeStatus,
+    certificationLabels: [...organicTags, ...fairTradeTags],
+    allLabels: labels
+  };
+}
+
 function extractCompatibleFoodItems(structuredData, text) {
   // Extract food items in format compatible with Open Food Facts integration
+  // New structure: check for products array first
+  if (structuredData && structuredData.products && Array.isArray(structuredData.products)) {
+    return structuredData.products.map(product => ({
+      name: product.name,
+      confidence: product.confidence || 80,
+      category: 'detected_food',
+      type: product.type || 'unknown',
+      position: product.position || 'unknown',
+      quantity: product.quantity || 1,
+      brandInfo: product.brandInfo || null,
+      searchTerms: product.openFoodFactsSearchTerms || [product.name], // Use OpenAI-generated search terms
+      organicStatus: product.organicStatus || 'unknown',
+      fairTradeStatus: product.fairTradeStatus || 'unknown',
+      certificationInfo: product.certificationInfo || null
+    }));
+  }
+
+  // Legacy structure: check for foodItems array
   if (structuredData && structuredData.foodItems && Array.isArray(structuredData.foodItems)) {
     return structuredData.foodItems.map(item => ({
       name: typeof item === 'string' ? item : item.name || item.food,
@@ -478,38 +606,70 @@ app.post('/api/products/search', async (req, res) => {
 
     const productResults = [];
 
-    // Search for each detected food item
+    // Search for each detected food item using enhanced search terms
     for (const foodItem of foodItems) {
       try {
-        const searchTerm = encodeURIComponent(foodItem.name);
-        const searchUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${searchTerm}&json=1&page_size=5`;
+        // Use OpenAI-generated search terms if available, fallback to product name
+        const searchTerms = foodItem.searchTerms || [foodItem.name];
+        let bestResult = null;
+        let bestSearchTerm = foodItem.name;
 
-        console.log(`Searching for "${foodItem.name}": ${searchUrl}`);
+        // Try each search term until we find good results
+        for (const term of searchTerms) {
+          const searchTerm = encodeURIComponent(term);
+          const searchUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${searchTerm}&json=1&page_size=5`;
 
-        const response = await fetch(searchUrl);
-        const data = await response.json();
+          console.log(`Searching for "${term}": ${searchUrl}`);
 
-        if (data.products && data.products.length > 0) {
-          const products = data.products.slice(0, 3).map(product => ({
-            id: product.id || product._id,
-            name: product.product_name || product.product_name_en || 'Unknown Product',
-            brand: product.brands || '',
-            url: `https://world.openfoodfacts.org/product/${product.code || product.id}`,
-            image: product.image_url || product.image_front_url,
-            nutritionGrade: product.nutrition_grades || product.nutriscore_grade,
-            categories: product.categories || '',
-            confidence: foodItem.confidence
-          }));
+          const response = await fetch(searchUrl);
+          const data = await response.json();
 
-          productResults.push({
-            searchTerm: foodItem.name,
-            detectedConfidence: foodItem.confidence,
-            products
-          });
+          if (data.products && data.products.length > 0) {
+            const products = data.products.slice(0, 3).map(product => {
+              const certificationInfo = extractCertificationStatus(product);
+              return {
+                id: product.id || product._id,
+                name: product.product_name || product.product_name_en || 'Unknown Product',
+                brand: product.brands || '',
+                url: `https://world.openfoodfacts.org/product/${product.code || product.id}`,
+                image: product.image_url || product.image_front_url,
+                nutritionGrade: product.nutrition_grades || product.nutriscore_grade,
+                categories: product.categories || '',
+                labels: product.labels || '',
+                labels_tags: product.labels_tags || [],
+                // Enhanced certification information from Open Food Facts
+                organicStatusOFF: certificationInfo.organicStatus,
+                fairTradeStatusOFF: certificationInfo.fairTradeStatus,
+                certificationLabels: certificationInfo.certificationLabels,
+                // Combine OpenAI analysis with Open Food Facts data
+                organicStatus: foodItem.organicStatus !== 'unknown' ? foodItem.organicStatus : certificationInfo.organicStatus,
+                fairTradeStatus: foodItem.fairTradeStatus !== 'unknown' ? foodItem.fairTradeStatus : certificationInfo.fairTradeStatus,
+                confidence: foodItem.confidence
+              };
+            });
+
+            bestResult = {
+              searchTerm: term,
+              detectedConfidence: foodItem.confidence,
+              organicStatus: foodItem.organicStatus,
+              fairTradeStatus: foodItem.fairTradeStatus,
+              certificationInfo: foodItem.certificationInfo,
+              products
+            };
+            break; // Found good results, stop searching additional terms
+          }
+        }
+
+        // Add the best result found or empty result if no matches
+        if (bestResult) {
+          productResults.push(bestResult);
         } else {
           productResults.push({
             searchTerm: foodItem.name,
             detectedConfidence: foodItem.confidence,
+            organicStatus: foodItem.organicStatus,
+            fairTradeStatus: foodItem.fairTradeStatus,
+            certificationInfo: foodItem.certificationInfo,
             products: []
           });
         }
