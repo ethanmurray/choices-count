@@ -6,7 +6,9 @@ export default function CameraTest() {
   const [error, setError] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [stream, setStream] = useState(null);
+  const [capturedImage, setCapturedImage] = useState(null);
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
 
   // Connect stream to video element when both are available
   useEffect(() => {
@@ -47,6 +49,37 @@ export default function CameraTest() {
     }
   };
 
+  const takePhoto = () => {
+    try {
+      console.log('Taking photo...');
+
+      // Check if video and canvas are ready
+      if (!videoRef.current || !canvasRef.current || !cameraReady) {
+        console.error('Video or canvas not ready');
+        return;
+      }
+
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const context = canvas.getContext('2d');
+
+      // Set canvas size to match video
+      canvas.width = video.videoWidth || 320;
+      canvas.height = video.videoHeight || 240;
+
+      // Draw current video frame to canvas
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Convert canvas to data URL
+      const imageData = canvas.toDataURL('image/png');
+      setCapturedImage(imageData);
+      console.log('Photo captured successfully');
+
+    } catch (err) {
+      console.error('Error taking photo:', err);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Camera Test</Text>
@@ -71,14 +104,30 @@ export default function CameraTest() {
         <View>
           <Text style={styles.success}>Camera access granted!</Text>
           {cameraReady && (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              style={styles.video}
-              onLoadedMetadata={() => console.log('Video metadata loaded')}
-              onError={(e) => console.error('Video error:', e)}
+            <>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                style={styles.video}
+                onLoadedMetadata={() => console.log('Video metadata loaded')}
+                onError={(e) => console.error('Video error:', e)}
+              />
+              <canvas
+                ref={canvasRef}
+                style={{ display: 'none' }}
+              />
+              <TouchableOpacity style={styles.button} onPress={takePhoto}>
+                <Text style={styles.buttonText}>Take Photo</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {capturedImage && (
+            <img
+              src={capturedImage}
+              alt="Captured"
+              style={styles.capturedImage}
             />
           )}
         </View>
@@ -133,5 +182,11 @@ const styles = StyleSheet.create({
     height: 240,
     backgroundColor: 'black',
     marginTop: 10,
+  },
+  capturedImage: {
+    width: 320,
+    height: 240,
+    marginTop: 10,
+    border: '2px solid #007AFF',
   },
 });
