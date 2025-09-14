@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Backend uploads
+backend/uploads/*.png
+backend/uploads/*.jpg
+backend/uploads/*.jpeg
+backend/uploads/*.gif

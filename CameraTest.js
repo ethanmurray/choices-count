@@ -7,6 +7,7 @@ export default function CameraTest() {
   const [cameraReady, setCameraReady] = useState(false);
   const [stream, setStream] = useState(null);
   const [capturedImage, setCapturedImage] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState('idle'); // idle, uploading, success, error
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -73,10 +74,50 @@ export default function CameraTest() {
       // Convert canvas to data URL
       const imageData = canvas.toDataURL('image/png');
       setCapturedImage(imageData);
+      setUploadStatus('idle'); // Reset upload status for new image
       console.log('Photo captured successfully');
 
     } catch (err) {
       console.error('Error taking photo:', err);
+    }
+  };
+
+  const saveImageForProcessing = async () => {
+    if (!capturedImage) {
+      console.error('No image to save');
+      return;
+    }
+
+    try {
+      setUploadStatus('uploading');
+      console.log('Saving image for processing...');
+
+      // Convert data URL to blob
+      const response = await fetch(capturedImage);
+      const blob = await response.blob();
+
+      // Create form data for upload
+      const formData = new FormData();
+      formData.append('image', blob, `food-scan-${Date.now()}.png`);
+      formData.append('timestamp', new Date().toISOString());
+
+      // Send to backend endpoint
+      const uploadResponse = await fetch('http://localhost:3001/api/images/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Upload failed: ${uploadResponse.status}`);
+      }
+
+      const result = await uploadResponse.json();
+      console.log('Image saved successfully:', result);
+      setUploadStatus('success');
+
+    } catch (err) {
+      console.error('Error saving image:', err);
+      setUploadStatus('error');
     }
   };
 
@@ -124,11 +165,33 @@ export default function CameraTest() {
             </>
           )}
           {capturedImage && (
-            <img
-              src={capturedImage}
-              alt="Captured"
-              style={styles.capturedImage}
-            />
+            <>
+              <img
+                src={capturedImage}
+                alt="Captured"
+                style={styles.capturedImage}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.button,
+                  uploadStatus === 'uploading' && styles.buttonDisabled
+                ]}
+                onPress={saveImageForProcessing}
+                disabled={uploadStatus === 'uploading'}
+              >
+                <Text style={styles.buttonText}>
+                  {uploadStatus === 'uploading' ? 'Saving...' : 'Save for Processing'}
+                </Text>
+              </TouchableOpacity>
+
+              {uploadStatus === 'success' && (
+                <Text style={styles.success}>Image saved successfully!</Text>
+              )}
+
+              {uploadStatus === 'error' && (
+                <Text style={styles.error}>Failed to save image. Please try again.</Text>
+              )}
+            </>
           )}
         </View>
       )}
@@ -188,5 +251,9 @@ const styles = StyleSheet.create({
     height: 240,
     marginTop: 10,
     border: '2px solid #007AFF',
+  },
+  buttonDisabled: {
+    backgroundColor: '#ccc',
+    opacity: 0.6,
   },
 });
