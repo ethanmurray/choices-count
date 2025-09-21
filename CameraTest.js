@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput } from 'react-native';
 
 export default function CameraTest() {
   const [hasPermission, setHasPermission] = useState(null);
@@ -15,6 +15,7 @@ export default function CameraTest() {
   const [productSearchStatus, setProductSearchStatus] = useState('idle'); // idle, searching, success, error
   const [openaiResults, setOpenaiResults] = useState(null);
   const [openaiAnalysisStatus, setOpenaiAnalysisStatus] = useState('idle'); // idle, analyzing, success, error
+  const [productDescription, setProductDescription] = useState(''); // User input for specific product
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -245,7 +246,8 @@ export default function CameraTest() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          filename: lastUploadedFilename
+          filename: lastUploadedFilename,
+          productDescription: productDescription.trim() || null
         }),
       });
 
@@ -276,6 +278,19 @@ export default function CameraTest() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       <Text style={styles.title}>Camera Test</Text>
+
+      {/* Product Description Input */}
+      <View style={styles.inputSection}>
+        <Text style={styles.inputLabel}>Describe a specific product to analyze (optional):</Text>
+        <TextInput
+          style={styles.textInput}
+          value={productDescription}
+          onChangeText={setProductDescription}
+          placeholder="e.g., Organic Gala apples, Fair Trade coffee, etc."
+          multiline={true}
+          numberOfLines={2}
+        />
+      </View>
 
       {hasPermission === null && (
         <TouchableOpacity style={styles.button} onPress={requestCameraPermission}>
@@ -462,6 +477,107 @@ export default function CameraTest() {
                       </Text>
                     </View>
                   )}
+
+                  {/* Enhanced Multi-Product Display */}
+                  {openaiResults.results.products && openaiResults.results.products.length > 0 && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>
+                        Individual Products ({openaiResults.results.totalProducts || openaiResults.results.products.length}):
+                      </Text>
+                      {openaiResults.results.products.map((product, index) => (
+                        <View key={product.id || index} style={styles.productCard}>
+                          <Text style={styles.productName}>
+                            {product.name}
+                            {product.quantity > 1 && <Text style={styles.quantity}> (×{product.quantity})</Text>}
+                          </Text>
+
+                          <View style={styles.productDetails}>
+                            <Text style={styles.productMeta}>
+                              {product.confidence}% confident • {product.position} • {product.type}
+                            </Text>
+
+                            {product.brandInfo && (
+                              <Text style={styles.brandInfo}>Brand: {product.brandInfo}</Text>
+                            )}
+
+                            {product.portionSize && (
+                              <Text style={styles.portionSize}>Portion: {product.portionSize}</Text>
+                            )}
+
+                            {product.nutritionalInfo && (
+                              <View style={styles.nutritionRow}>
+                                <Text style={styles.nutritionItem}>
+                                  Cal: {product.nutritionalInfo.calories}
+                                </Text>
+                                <Text style={styles.nutritionItem}>
+                                  Protein: {product.nutritionalInfo.protein}
+                                </Text>
+                                <Text style={styles.nutritionItem}>
+                                  Carbs: {product.nutritionalInfo.carbs}
+                                </Text>
+                                <Text style={styles.nutritionItem}>
+                                  Fat: {product.nutritionalInfo.fat}
+                                </Text>
+                              </View>
+                            )}
+
+                            {product.dietaryFlags && product.dietaryFlags.length > 0 && (
+                              <View style={styles.dietaryFlags}>
+                                {product.dietaryFlags.map((flag, flagIndex) => (
+                                  <Text key={flagIndex} style={styles.dietaryFlag}>
+                                    {flag}
+                                  </Text>
+                                ))}
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Scene Analysis */}
+                  {openaiResults.results.sceneAnalysis && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Scene Analysis:</Text>
+                      <Text style={styles.resultItem}>
+                        Scene: {openaiResults.results.sceneAnalysis.sceneType}
+                      </Text>
+                      <Text style={styles.resultItem}>
+                        Setting: {openaiResults.results.sceneAnalysis.setting}
+                      </Text>
+                      <Text style={styles.resultItem}>
+                        Quality: {openaiResults.results.sceneAnalysis.imageQuality}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Aggregate Nutrition */}
+                  {openaiResults.results.aggregateNutrition && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>Total Nutrition:</Text>
+                      <View style={styles.nutritionSummary}>
+                        <Text style={styles.nutritionTotal}>
+                          {openaiResults.results.aggregateNutrition.totalCalories} calories total
+                        </Text>
+                        <Text style={styles.nutritionBreakdown}>
+                          Protein: {openaiResults.results.aggregateNutrition.totalProtein} |
+                          Carbs: {openaiResults.results.aggregateNutrition.totalCarbs} |
+                          Fat: {openaiResults.results.aggregateNutrition.totalFat}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Recommendations */}
+                  {openaiResults.results.recommendations && (
+                    <View style={styles.resultSection}>
+                      <Text style={styles.sectionTitle}>AI Recommendations:</Text>
+                      <Text style={styles.recommendations}>
+                        {openaiResults.results.recommendations}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -481,6 +597,25 @@ export default function CameraTest() {
                       <Text style={styles.productSearchTitle}>
                         "{searchResult.searchTerm}" ({searchResult.detectedConfidence}% confident)
                       </Text>
+
+                      {/* Show AI-detected organic/fair trade status for this product */}
+                      {((searchResult.organicStatus && searchResult.organicStatus !== 'unknown') ||
+                        (searchResult.fairTradeStatus && searchResult.fairTradeStatus !== 'unknown')) && (
+                        <View style={styles.aiDetectionInfo}>
+                          <Text style={styles.aiDetectionTitle}>AI Analysis:</Text>
+                          {searchResult.organicStatus && searchResult.organicStatus !== 'unknown' && (
+                            <Text style={styles.aiDetectionText}>
+                              🌱 Organic: {searchResult.organicStatus.replace('_', ' ')}
+                            </Text>
+                          )}
+                          {searchResult.fairTradeStatus && searchResult.fairTradeStatus !== 'unknown' && (
+                            <Text style={styles.aiDetectionText}>
+                              🤝 Fair Trade: {searchResult.fairTradeStatus.replace('_', ' ')}
+                            </Text>
+                          )}
+                        </View>
+                      )}
+
                       {searchResult.products.length > 0 ? (
                         searchResult.products.map((product, productIndex) => (
                           <TouchableOpacity
@@ -495,6 +630,32 @@ export default function CameraTest() {
                             <Text style={styles.productName}>
                               {product.name} {product.brand && `(${product.brand})`}
                             </Text>
+
+                            {/* Enhanced certification display */}
+                            <View style={styles.certificationInfo}>
+                              {product.organicStatus && product.organicStatus !== 'unknown' && (
+                                <View style={[styles.certificationBadge, styles.organicBadge]}>
+                                  <Text style={styles.certificationText}>
+                                    🌱 {product.organicStatus.replace(/certified_|likely_/g, '').toUpperCase()}
+                                  </Text>
+                                </View>
+                              )}
+                              {product.fairTradeStatus && product.fairTradeStatus !== 'unknown' && (
+                                <View style={[styles.certificationBadge, styles.fairTradeBadge]}>
+                                  <Text style={styles.certificationText}>
+                                    🤝 {product.fairTradeStatus.replace(/certified_|likely_/g, '').toUpperCase()}
+                                  </Text>
+                                </View>
+                              )}
+                              {product.nutritionGrade && (
+                                <View style={[styles.certificationBadge, styles.nutritionBadge]}>
+                                  <Text style={styles.certificationText}>
+                                    📊 Nutri-Score: {product.nutritionGrade.toUpperCase()}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+
                             <Text style={styles.productUrl}>View on Open Food Facts →</Text>
                           </TouchableOpacity>
                         ))
@@ -711,5 +872,211 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ddd',
     fontFamily: 'monospace',
+  },
+
+  // Multi-product UI styles
+  productCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#007AFF',
+  },
+
+  productName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1d1d1f',
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  quantity: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#007AFF',
+    marginLeft: 4,
+  },
+
+  productDetails: {
+    gap: 8,
+  },
+
+  productMeta: {
+    fontSize: 14,
+    color: '#8e8e93',
+    fontStyle: 'italic',
+  },
+
+  nutritionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#ffffff',
+    borderRadius: 6,
+    marginVertical: 2,
+  },
+
+  nutritionLabel: {
+    fontSize: 14,
+    color: '#3a3a3c',
+    fontWeight: '500',
+  },
+
+  nutritionValue: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+
+  dietaryFlags: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+
+  dietaryFlag: {
+    backgroundColor: '#34c759',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+  },
+
+  dietaryFlagText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+
+  sceneAnalysis: {
+    backgroundColor: '#f2f2f7',
+    borderRadius: 12,
+    padding: 16,
+    marginVertical: 12,
+  },
+
+  nutritionSummary: {
+    backgroundColor: '#e8f4f8',
+    borderRadius: 12,
+    padding: 16,
+    marginVertical: 12,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+
+  recommendations: {
+    backgroundColor: '#fff3cd',
+    borderRadius: 12,
+    padding: 16,
+    marginVertical: 12,
+    borderWidth: 1,
+    borderColor: '#ffc107',
+  },
+
+  sectionSubtitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1d1d1f',
+    marginBottom: 8,
+  },
+
+  sectionContent: {
+    fontSize: 14,
+    color: '#3a3a3c',
+    lineHeight: 20,
+  },
+
+  aggregateNutrition: {
+    gap: 4,
+  },
+
+  // Product description input styles
+  inputSection: {
+    marginVertical: 16,
+    padding: 16,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1d1d1f',
+    marginBottom: 8,
+  },
+
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#ffffff',
+    color: '#1d1d1f',
+    textAlignVertical: 'top',
+    minHeight: 60,
+  },
+
+  // Enhanced product certification styles
+  aiDetectionInfo: {
+    backgroundColor: '#e8f4f8',
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#007AFF',
+  },
+
+  aiDetectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1d1d1f',
+    marginBottom: 4,
+  },
+
+  aiDetectionText: {
+    fontSize: 13,
+    color: '#3a3a3c',
+    marginBottom: 2,
+  },
+
+  certificationInfo: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+
+  certificationBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+  },
+
+  organicBadge: {
+    backgroundColor: '#34c759',
+  },
+
+  fairTradeBadge: {
+    backgroundColor: '#ff9500',
+  },
+
+  nutritionBadge: {
+    backgroundColor: '#007AFF',
+  },
+
+  certificationText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });
