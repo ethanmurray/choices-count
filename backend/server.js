@@ -16,13 +16,31 @@ const PORT = 3001;
 // Initialize Vision client (Google Cloud or Mock for development)
 let visionClient;
 
-// Check if Google Cloud credentials are available
-if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CLOUD_PROJECT) {
+// Check if Google Cloud credentials are available via environment variables
+if (process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_CLOUD_CLIENT_EMAIL && process.env.GOOGLE_CLOUD_PRIVATE_KEY) {
   try {
-    visionClient = new vision.ImageAnnotatorClient();
-    console.log('Using Google Cloud Vision API');
+    // Configure Google Cloud Vision client with environment variables
+    const credentials = {
+      type: 'service_account',
+      project_id: process.env.GOOGLE_CLOUD_PROJECT,
+      private_key_id: process.env.GOOGLE_CLOUD_PRIVATE_KEY_ID,
+      private_key: process.env.GOOGLE_CLOUD_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.GOOGLE_CLOUD_CLIENT_EMAIL,
+      client_id: process.env.GOOGLE_CLOUD_CLIENT_ID,
+      auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+      token_uri: 'https://oauth2.googleapis.com/token',
+      auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+      client_x509_cert_url: `https://www.googleapis.com/robot/v1/metadata/x509/${encodeURIComponent(process.env.GOOGLE_CLOUD_CLIENT_EMAIL)}`,
+      universe_domain: 'googleapis.com'
+    };
+
+    visionClient = new vision.ImageAnnotatorClient({
+      credentials: credentials,
+      projectId: process.env.GOOGLE_CLOUD_PROJECT
+    });
+    console.log('Using Google Cloud Vision API with environment variables');
   } catch (error) {
-    console.log('Google Cloud Vision API failed, using Mock Vision API');
+    console.log('Google Cloud Vision API failed, using Mock Vision API:', error.message);
     visionClient = new MockVisionClient();
   }
 } else {

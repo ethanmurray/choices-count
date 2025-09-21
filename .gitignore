@@ -33,6 +33,7 @@ yarn-error.*
 # local env files
 .env
 .env*.local
+.env.vercel
 
 # typescript
 *.tsbuildinfo
@@ -49,3 +50,5 @@ backend/uploads/*.gif
 
 # Google Cloud credentials
 backend/google-credentials.json
+.vercel
+claude-code-docs/
