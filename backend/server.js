@@ -1,3 +1,6 @@
+// Load environment variables first
+require('dotenv').config();
+
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
@@ -343,7 +346,8 @@ Return a JSON response with this exact structure:
       "certificationInfo": "specific certification text or logos visible",
       "freshness": "fresh/good/poor quality assessment",
       "preparationMethod": "raw/cooked/processed description",
-      "openFoodFactsSearchTerms": ["primary_search_term", "alt_term"] // optimized search terms for Open Food Facts
+      "visibleText": "ALL TEXT visible on packaging, labels, or signage", // Extract ALL readable text
+      "openFoodFactsSearchTerms": ["brand product_name", "product_name brand", "exact_package_text"] // CRITICAL: Generate 3-5 optimized search terms combining brand, product name, and visible text
     }
   ],
   "sceneAnalysis": {
@@ -372,9 +376,14 @@ Return a JSON response with this exact structure:
 5. Extract any visible text/branding for product identification
 6. Focus on products that can be found in food databases
 7. Be specific about packaging vs. contents (e.g., "yogurt container" vs. "yogurt")
-8. **ORGANIC/FAIR TRADE DETECTION**: Carefully examine labels for organic certification logos (USDA Organic, EU Organic, etc.) and Fair Trade certifications
-9. **OPTIMIZED SEARCH TERMS**: Generate the best possible search terms for each product to find matches in Open Food Facts database
-10. Include brand names, product names, and specific descriptors in search terms
+8. **TEXT EXTRACTION**: Extract ALL visible text from packages, labels, signs, and displays - this is CRITICAL for accurate product matching
+9. **ORGANIC/FAIR TRADE DETECTION**: Carefully examine labels for organic certification logos (USDA Organic, EU Organic, etc.) and Fair Trade certifications
+10. **SEARCH TERMS GENERATION**: MANDATORY - Generate 3-5 optimized search terms for EACH product:
+    - Combine brand name + product name (e.g., "Horizon Organic Milk")
+    - Use exact text from packaging when possible
+    - Include size/variety if visible (e.g., "Coca Cola 12oz", "Honey Nut Cheerios")
+    - Try different word orders (brand first, product first)
+11. **BRAND DETECTION**: Always identify and include brand names in search terms for better database matching
 
 Analyze the image thoroughly and provide detailed, structured data for each product.`
             },
@@ -524,6 +533,58 @@ function extractPortionInfo(text) {
   return null;
 }
 
+// Generate intelligent search terms for Open Food Facts when OpenAI doesn't provide them
+function generateSearchTerms(product) {
+  const searchTerms = [];
+
+  // Use OpenAI-provided search terms if available
+  if (product.openFoodFactsSearchTerms && product.openFoodFactsSearchTerms.length > 0) {
+    searchTerms.push(...product.openFoodFactsSearchTerms);
+  }
+
+  // Extract text-based search terms from brand and visible text
+  const brandInfo = product.brandInfo || '';
+  const visibleText = product.visibleText || '';
+  const productName = product.name || '';
+
+  // Generate combinations of brand + product name
+  if (brandInfo && productName) {
+    searchTerms.push(`${brandInfo} ${productName}`);
+    searchTerms.push(`${productName} ${brandInfo}`);
+  }
+
+  // Use visible text as search terms (split and clean)
+  if (visibleText) {
+    const textWords = visibleText
+      .replace(/[^\w\s]/g, ' ') // Remove special characters
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !['the', 'and', 'for', 'with'].includes(word.toLowerCase()));
+
+    // Create meaningful combinations from visible text
+    if (textWords.length >= 2) {
+      searchTerms.push(textWords.slice(0, 3).join(' ')); // First 3 words
+      searchTerms.push(textWords.slice(0, 2).join(' ')); // First 2 words
+    }
+  }
+
+  // Fallback to product name if no other terms available
+  if (searchTerms.length === 0 && productName) {
+    searchTerms.push(productName);
+
+    // Try to extract brand from product name if not separately identified
+    const commonBrands = ['Coca Cola', 'Pepsi', 'Kraft', 'Nestle', 'Kellogg', 'General Mills', 'Nabisco', 'Oreo', 'Lay\'s', 'Doritos'];
+    for (const brand of commonBrands) {
+      if (productName.toLowerCase().includes(brand.toLowerCase())) {
+        searchTerms.push(brand);
+        break;
+      }
+    }
+  }
+
+  // Remove duplicates and limit to 5 terms
+  return [...new Set(searchTerms)].slice(0, 5);
+}
+
 // Extract organic and fair trade status from Open Food Facts labels
 function extractCertificationStatus(product) {
   const labels = (product.labels || '').toLowerCase();
@@ -563,19 +624,25 @@ function extractCompatibleFoodItems(structuredData, text) {
   // Extract food items in format compatible with Open Food Facts integration
   // New structure: check for products array first
   if (structuredData && structuredData.products && Array.isArray(structuredData.products)) {
-    return structuredData.products.map(product => ({
-      name: product.name,
-      confidence: product.confidence || 80,
-      category: 'detected_food',
-      type: product.type || 'unknown',
-      position: product.position || 'unknown',
-      quantity: product.quantity || 1,
-      brandInfo: product.brandInfo || null,
-      searchTerms: product.openFoodFactsSearchTerms || [product.name], // Use OpenAI-generated search terms
-      organicStatus: product.organicStatus || 'unknown',
-      fairTradeStatus: product.fairTradeStatus || 'unknown',
-      certificationInfo: product.certificationInfo || null
-    }));
+    return structuredData.products.map(product => {
+      // Generate intelligent search terms using all available information
+      const searchTerms = generateSearchTerms(product);
+
+      return {
+        name: product.name,
+        confidence: product.confidence || 80,
+        category: 'detected_food',
+        type: product.type || 'unknown',
+        position: product.position || 'unknown',
+        quantity: product.quantity || 1,
+        brandInfo: product.brandInfo || null,
+        visibleText: product.visibleText || null,
+        searchTerms: searchTerms.length > 0 ? searchTerms : [product.name], // Enhanced search terms
+        organicStatus: product.organicStatus || 'unknown',
+        fairTradeStatus: product.fairTradeStatus || 'unknown',
+        certificationInfo: product.certificationInfo || null
+      };
+    });
   }
 
   // Legacy structure: check for foodItems array
@@ -609,8 +676,11 @@ app.post('/api/products/search', async (req, res) => {
     // Search for each detected food item using enhanced search terms
     for (const foodItem of foodItems) {
       try {
-        // Use OpenAI-generated search terms if available, fallback to product name
+        // Use enhanced search terms with detailed logging
         const searchTerms = foodItem.searchTerms || [foodItem.name];
+        console.log(`Generated search terms for "${foodItem.name}":`, searchTerms);
+        console.log(`Brand info: "${foodItem.brandInfo}", Visible text: "${foodItem.visibleText}"`);
+
         let bestResult = null;
         let bestSearchTerm = foodItem.name;
 
